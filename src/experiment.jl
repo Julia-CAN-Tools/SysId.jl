@@ -24,11 +24,7 @@ Fields:
 mutable struct SysIdController <: SS.AbstractController
     params::Dict{String,Float64}
     signal_map::Vector{Tuple{String,String}}
-    elapsed::Float64
-    active::Bool
-    finished::Bool
-    last_start_count::Float64
-    last_stop_count::Float64
+    lifecycle::SS.ControllerLifecycle
 end
 
 """
@@ -69,7 +65,7 @@ function SysIdController(signal_map::Vector{Tuple{String,String}})
     for (prefix, _) in signal_map
         merge!(params, _default_signal_params(prefix))
     end
-    return SysIdController(params, signal_map, 0.0, false, false, 0.0, 0.0)
+    return SysIdController(params, signal_map, SS.ControllerLifecycle())
 end
 
 """
@@ -120,51 +116,15 @@ Control callback for system identification. Each cycle:
 """
 function sysid_callback(ctrl::SysIdController, _inputs, outputs, dt_s::Float64)
     p = ctrl.params
+    SS.update_lifecycle!(ctrl.lifecycle, p, dt_s)
 
-    start_count = get(p, "start_cmd", 0.0)
-    stop_count  = get(p, "stop_cmd", 0.0)
-    duration    = get(p, "duration", 30.0)
-
-    # Detect start event (rising count)
-    if start_count > ctrl.last_start_count
-        ctrl.last_start_count = start_count
-        ctrl.elapsed  = 0.0
-        ctrl.active   = true
-        ctrl.finished = false
-    end
-
-    # Detect stop event (rising count)
-    if stop_count > ctrl.last_stop_count
-        ctrl.last_stop_count = stop_count
-        if ctrl.active
-            ctrl.active   = false
-            ctrl.finished = true
-        end
-    end
-
-    if ctrl.active
-        ctrl.elapsed += dt_s
-        p["elapsed"] = ctrl.elapsed
-        p["running"] = 1.0
-
-        if ctrl.elapsed <= duration
-            t = ctrl.elapsed
-            for (prefix, out_key) in ctrl.signal_map
-                sig = signal_from_params(p, prefix)
-                outputs[out_key] = sig === nothing ? 0.0 : evaluate(sig, t)
-            end
-        else
-            # Duration expired
-            ctrl.active   = false
-            ctrl.finished = true
-            p["running"] = 0.0
-            for (_, out_key) in ctrl.signal_map
-                outputs[out_key] = 0.0
-            end
+    if ctrl.lifecycle.active
+        t = ctrl.lifecycle.elapsed
+        for (prefix, out_key) in ctrl.signal_map
+            sig = signal_from_params(p, prefix)
+            outputs[out_key] = sig === nothing ? 0.0 : evaluate(sig, t)
         end
     else
-        p["elapsed"] = ctrl.elapsed
-        p["running"] = 0.0
         for (_, out_key) in ctrl.signal_map
             outputs[out_key] = 0.0
         end

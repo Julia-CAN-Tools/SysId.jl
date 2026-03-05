@@ -201,7 +201,7 @@ end
     @testset "SysIdController default constructor" begin
         signal_map = [("Tau1", "cmd.Tau1"), ("Tau2", "cmd.Tau2")]
         ctrl = SysIdController(signal_map)
-        @test ctrl.elapsed == 0.0
+        @test ctrl.lifecycle.elapsed == 0.0
         @test ctrl.params["duration"] == 30.0
         @test ctrl.params["running"] == 0.0
         @test ctrl.params["Tau1_type"] == 0.0
@@ -239,7 +239,7 @@ end
         sysid_callback(ctrl, inputs, outputs, 0.01)
 
         @test outputs["io.T"] ≈ 5.0 atol=1e-10
-        @test ctrl.elapsed ≈ 0.01 atol=1e-10
+        @test ctrl.lifecycle.elapsed ≈ 0.01 atol=1e-10
         @test ctrl.params["running"] == 1.0
     end
 
@@ -251,16 +251,16 @@ end
         ctrl.params["T_step_time"] = 0.0
         ctrl.params["duration"]    = 1.0
         ctrl.params["start_cmd"]   = 1.0   # trigger start
-        ctrl.active = true
-        ctrl.last_start_count = 1.0
-        ctrl.elapsed = 1.0   # already at duration
+        ctrl.lifecycle.active = true
+        ctrl.lifecycle.prev_start_cmd = 1.0
+        ctrl.lifecycle.elapsed = 1.0   # already at duration
 
         outputs = Dict{String,Float64}("io.T" => 99.0)
         sysid_callback(ctrl, Dict{String,Float64}(), outputs, 0.01)
 
         @test outputs["io.T"] == 0.0
         @test ctrl.params["running"] == 0.0
-        @test ctrl.finished == true
+        @test ctrl.lifecycle.active == false
     end
 
     @testset "sysid_callback type=0 outputs zero" begin
@@ -287,7 +287,7 @@ end
         sysid_callback(ctrl, Dict{String,Float64}(), outputs, 0.01)
         @test outputs["io.T"] == 0.0
         @test ctrl.params["running"] == 0.0
-        @test ctrl.active == false
+        @test ctrl.lifecycle.active == false
     end
 
     @testset "sysid_callback stop_cmd stops experiment" begin
@@ -297,9 +297,9 @@ end
         ctrl.params["T_amplitude"] = 5.0
         ctrl.params["duration"]    = 10.0
         ctrl.params["start_cmd"]   = 1.0
-        ctrl.last_start_count = 1.0
-        ctrl.active = true
-        ctrl.elapsed = 0.5
+        ctrl.lifecycle.prev_start_cmd = 1.0
+        ctrl.lifecycle.active = true
+        ctrl.lifecycle.elapsed = 0.5
 
         # Trigger stop
         ctrl.params["stop_cmd"] = 1.0
@@ -309,8 +309,8 @@ end
 
         @test outputs["io.T"] == 0.0
         @test ctrl.params["running"] == 0.0
-        @test ctrl.active == false
-        @test ctrl.finished == true
+        @test ctrl.lifecycle.active == false
+        @test ctrl.lifecycle.active == false
     end
 
     @testset "sysid_callback accumulates elapsed" begin
@@ -323,7 +323,7 @@ end
         for _ in 1:5
             sysid_callback(ctrl, Dict{String,Float64}(), outputs, 0.01)
         end
-        @test ctrl.elapsed ≈ 0.05 atol=1e-10
+        @test ctrl.lifecycle.elapsed ≈ 0.05 atol=1e-10
         @test ctrl.params["elapsed"] ≈ 0.05 atol=1e-10
     end
 
@@ -339,19 +339,19 @@ end
         # Start first experiment
         ctrl.params["start_cmd"] = 1.0
         sysid_callback(ctrl, Dict{String,Float64}(), outputs, 0.01)
-        @test ctrl.active == true
+        @test ctrl.lifecycle.active == true
         @test outputs["io.T"] ≈ 5.0 atol=1e-10
 
         # Stop it
         ctrl.params["stop_cmd"] = 1.0
         sysid_callback(ctrl, Dict{String,Float64}(), outputs, 0.01)
-        @test ctrl.active == false
+        @test ctrl.lifecycle.active == false
 
         # Start second experiment (increment start_cmd)
         ctrl.params["start_cmd"] = 2.0
         sysid_callback(ctrl, Dict{String,Float64}(), outputs, 0.01)
-        @test ctrl.active == true
-        @test ctrl.elapsed ≈ 0.01 atol=1e-10  # elapsed reset
+        @test ctrl.lifecycle.active == true
+        @test ctrl.lifecycle.elapsed ≈ 0.01 atol=1e-10  # elapsed reset
         @test outputs["io.T"] ≈ 5.0 atol=1e-10
     end
 
