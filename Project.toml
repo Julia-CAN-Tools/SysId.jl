@@ -1,0 +1,20 @@
+name = "SysId"
+uuid = "b2c3d4e5-6789-abcd-ef01-23456789abcd"
+version = "0.1.0"
+authors = ["A-C1 <aditya2192@gmail.com>"]
+
+[deps]
+AcrobatSim = "a1b2c3d4-5678-9abc-def0-123456789abc"
+CANInterface = "44756509-f907-4102-b943-bbf9a270a596"
+CANUtils = "cda4bd93-d5c6-49f2-9dbf-c90406d773d0"
+J1939Parser = "a65d7beb-48e4-42fa-bd3a-ef6c57044cbc"
+SystemSimulator = "c7bcbf84-9101-467e-8fba-73742d6023ba"
+
+[compat]
+julia = "1.11"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

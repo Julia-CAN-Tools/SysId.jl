@@ -1,0 +1,210 @@
+"""
+SysId experiment controller and runner.
+
+SysIdController holds signal params (tunable via TcpMonitor/Dash) and drives
+output signals according to the current signal configuration.
+
+run_experiment! wires up IOConfigs into a SystemRuntime and runs for a duration.
+"""
+
+import SystemSimulator as SS
+
+# ── SysIdController ───────────────────────────────────────────────────────────
+
+"""
+    SysIdController
+
+Controller for system identification experiments.
+
+Fields:
+- `params`      — all signal params + `elapsed`, `duration`, `running`
+- `signal_map`  — Vector of (param_prefix, output_global_key) pairs
+- `elapsed`     — accumulated time in seconds (updated each callback)
+"""
+mutable struct SysIdController <: SS.AbstractController
+    params::Dict{String,Float64}
+    signal_map::Vector{Tuple{String,String}}
+    elapsed::Float64
+end
+
+"""
+    _default_signal_params(prefix) -> Dict{String,Float64}
+
+Return a dict of all signal params for a given prefix, all zeroed (type=0 → off).
+"""
+function _default_signal_params(prefix::String)
+    return Dict{String,Float64}(
+        "$(prefix)_type"           => 0.0,
+        "$(prefix)_amplitude"      => 0.0,
+        "$(prefix)_frequency"      => 1.0,
+        "$(prefix)_phase"          => 0.0,
+        "$(prefix)_offset"         => 0.0,
+        "$(prefix)_f_start"        => 0.1,
+        "$(prefix)_f_end"          => 5.0,
+        "$(prefix)_sweep_duration" => 10.0,
+        "$(prefix)_step_time"      => 0.0,
+        "$(prefix)_pulse_start"    => 0.0,
+        "$(prefix)_pulse_width"    => 1.0,
+    )
+end
+
+"""
+    SysIdController(signal_map) -> SysIdController
+
+Construct controller with all signals off (type=0).
+`signal_map` is a Vector of (param_prefix, output_global_key) pairs.
+"""
+function SysIdController(signal_map::Vector{Tuple{String,String}})
+    params = Dict{String,Float64}(
+        "elapsed"  => 0.0,
+        "duration" => 30.0,
+        "running"  => 0.0,
+    )
+    for (prefix, _) in signal_map
+        merge!(params, _default_signal_params(prefix))
+    end
+    return SysIdController(params, signal_map, 0.0)
+end
+
+"""
+    ExperimentConfig
+
+Optional pre-populated signal configuration for an experiment.
+
+Fields:
+- `duration`     — experiment duration in seconds
+- `signal_specs` — Dict mapping param_prefix => Dict of override params
+  (e.g., `"Tau1" => Dict("type"=>2.0, "amplitude"=>2.0, "f_start"=>0.1, ...)`)
+"""
+struct ExperimentConfig
+    duration::Float64
+    signal_specs::Dict{String,Dict{String,Float64}}
+end
+
+ExperimentConfig(duration::Float64) = ExperimentConfig(duration, Dict{String,Dict{String,Float64}}())
+
+"""
+    SysIdController(signal_map, cfg) -> SysIdController
+
+Construct controller with initial signal parameters from an ExperimentConfig.
+"""
+function SysIdController(signal_map::Vector{Tuple{String,String}}, cfg::ExperimentConfig)
+    ctrl = SysIdController(signal_map)
+    ctrl.params["duration"] = cfg.duration
+    for (prefix, spec) in cfg.signal_specs
+        for (key, val) in spec
+            param_key = "$(prefix)_$(key)"
+            if haskey(ctrl.params, param_key)
+                ctrl.params[param_key] = Float64(val)
+            end
+        end
+    end
+    return ctrl
+end
+
+# ── sysid_callback ────────────────────────────────────────────────────────────
+
+"""
+    sysid_callback(ctrl, inputs, outputs, dt_s)
+
+Control callback for system identification. Each cycle:
+1. Increments elapsed time by dt_s
+2. Reconstructs signals from params via signal_from_params
+3. Evaluates signals at current elapsed time
+4. Writes values to outputs
+5. Zeros all outputs after duration expires
+"""
+function sysid_callback(ctrl::SysIdController, _inputs, outputs, dt_s::Float64)
+    p = ctrl.params
+
+    # Accumulate time
+    ctrl.elapsed += dt_s
+    p["elapsed"] = ctrl.elapsed
+
+    duration = get(p, "duration", 30.0)
+
+    if ctrl.elapsed <= duration
+        p["running"] = 1.0
+        t = ctrl.elapsed
+        for (prefix, out_key) in ctrl.signal_map
+            sig = signal_from_params(p, prefix)
+            outputs[out_key] = sig === nothing ? 0.0 : evaluate(sig, t)
+        end
+    else
+        p["running"] = 0.0
+        for (_, out_key) in ctrl.signal_map
+            outputs[out_key] = 0.0
+        end
+    end
+
+    return nothing
+end
+
+# ── run_experiment! ───────────────────────────────────────────────────────────
+
+"""
+    run_experiment!(signal_map, io_configs, dt_ms; kwargs...) -> String
+
+Run a system identification experiment.
+
+Arguments:
+- `signal_map`   — Vector of (param_prefix, output_global_key) pairs
+- `io_configs`   — Vector of IOConfig (pre-built with SS.IOConfig)
+- `dt_ms`        — control loop sample period in milliseconds
+
+Keyword arguments:
+- `logfile`      — CSV output path (default: "SysIdLog.csv")
+- `experiment`   — optional ExperimentConfig for initial signal params
+- `monitor`      — optional SS.MonitorConfig for Dash connectivity
+- `waker_fn`     — optional 0-arg function called after stop to unblock blocking readers
+
+Returns the logfile path.
+"""
+function run_experiment!(
+    signal_map::Vector{Tuple{String,String}},
+    io_configs::Vector{SS.IOConfig},
+    dt_ms::Int;
+    logfile::String = "SysIdLog.csv",
+    experiment::Union{ExperimentConfig,Nothing} = nothing,
+    monitor::Union{SS.MonitorConfig,Nothing} = nothing,
+    waker_fn::Union{Function,Nothing} = nothing,
+)
+    ctrl = if experiment !== nothing
+        SysIdController(signal_map, experiment)
+    else
+        SysIdController(signal_map)
+    end
+
+    cfg = SS.SystemConfig(dt_ms, io_configs, logfile, monitor)
+    sf  = SS.StopSignal()
+    runtime = SS.SystemRuntime(cfg, sf, ctrl)
+
+    duration = ctrl.params["duration"]
+
+    @info "Starting SysId experiment" dt_ms=dt_ms duration_s=duration logfile=logfile
+
+    SS.start!(runtime, sysid_callback)
+
+    try
+        sleep(duration + 0.5)
+    catch e
+        e isa InterruptException || rethrow(e)
+        @info "Interrupted — stopping early"
+    end
+
+    SS.request_stop!(sf)
+
+    if waker_fn !== nothing
+        try
+            waker_fn()
+        catch err
+            @warn "Waker function failed" exception=(err, catch_backtrace())
+        end
+    end
+
+    SS.stop!(runtime)
+
+    @info "Experiment complete" steps=runtime.step_count[] logfile=logfile
+
+    return logfile
+end
