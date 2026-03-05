@@ -25,6 +25,10 @@ mutable struct SysIdController <: SS.AbstractController
     params::Dict{String,Float64}
     signal_map::Vector{Tuple{String,String}}
     elapsed::Float64
+    active::Bool
+    finished::Bool
+    last_start_count::Float64
+    last_stop_count::Float64
 end
 
 """
@@ -56,14 +60,16 @@ Construct controller with all signals off (type=0).
 """
 function SysIdController(signal_map::Vector{Tuple{String,String}})
     params = Dict{String,Float64}(
-        "elapsed"  => 0.0,
-        "duration" => 30.0,
-        "running"  => 0.0,
+        "elapsed"   => 0.0,
+        "duration"  => 30.0,
+        "running"   => 0.0,
+        "start_cmd" => 0.0,
+        "stop_cmd"  => 0.0,
     )
     for (prefix, _) in signal_map
         merge!(params, _default_signal_params(prefix))
     end
-    return SysIdController(params, signal_map, 0.0)
+    return SysIdController(params, signal_map, 0.0, false, false, 0.0, 0.0)
 end
 
 """
@@ -108,29 +114,56 @@ end
     sysid_callback(ctrl, inputs, outputs, dt_s)
 
 Control callback for system identification. Each cycle:
-1. Increments elapsed time by dt_s
-2. Reconstructs signals from params via signal_from_params
-3. Evaluates signals at current elapsed time
-4. Writes values to outputs
-5. Zeros all outputs after duration expires
+1. Checks start_cmd / stop_cmd counters for start/stop events
+2. If active, increments elapsed time and evaluates signals
+3. Zeros outputs when stopped or after duration expires
 """
 function sysid_callback(ctrl::SysIdController, _inputs, outputs, dt_s::Float64)
     p = ctrl.params
 
-    # Accumulate time
-    ctrl.elapsed += dt_s
-    p["elapsed"] = ctrl.elapsed
+    start_count = get(p, "start_cmd", 0.0)
+    stop_count  = get(p, "stop_cmd", 0.0)
+    duration    = get(p, "duration", 30.0)
 
-    duration = get(p, "duration", 30.0)
+    # Detect start event (rising count)
+    if start_count > ctrl.last_start_count
+        ctrl.last_start_count = start_count
+        ctrl.elapsed  = 0.0
+        ctrl.active   = true
+        ctrl.finished = false
+    end
 
-    if ctrl.elapsed <= duration
+    # Detect stop event (rising count)
+    if stop_count > ctrl.last_stop_count
+        ctrl.last_stop_count = stop_count
+        if ctrl.active
+            ctrl.active   = false
+            ctrl.finished = true
+        end
+    end
+
+    if ctrl.active
+        ctrl.elapsed += dt_s
+        p["elapsed"] = ctrl.elapsed
         p["running"] = 1.0
-        t = ctrl.elapsed
-        for (prefix, out_key) in ctrl.signal_map
-            sig = signal_from_params(p, prefix)
-            outputs[out_key] = sig === nothing ? 0.0 : evaluate(sig, t)
+
+        if ctrl.elapsed <= duration
+            t = ctrl.elapsed
+            for (prefix, out_key) in ctrl.signal_map
+                sig = signal_from_params(p, prefix)
+                outputs[out_key] = sig === nothing ? 0.0 : evaluate(sig, t)
+            end
+        else
+            # Duration expired
+            ctrl.active   = false
+            ctrl.finished = true
+            p["running"] = 0.0
+            for (_, out_key) in ctrl.signal_map
+                outputs[out_key] = 0.0
+            end
         end
     else
+        p["elapsed"] = ctrl.elapsed
         p["running"] = 0.0
         for (_, out_key) in ctrl.signal_map
             outputs[out_key] = 0.0
@@ -157,6 +190,10 @@ Keyword arguments:
 - `experiment`   — optional ExperimentConfig for initial signal params
 - `monitor`      — optional SS.MonitorConfig for Dash connectivity
 - `waker_fn`     — optional 0-arg function called after stop to unblock blocking readers
+- `autostart`    — if true, start experiment immediately (default: true when no monitor)
+
+When `autostart` is false (default with monitor/Dash), the runtime waits for
+start/stop commands from Dash. Press Ctrl+C to shut down the runtime.
 
 Returns the logfile path.
 """
@@ -168,6 +205,7 @@ function run_experiment!(
     experiment::Union{ExperimentConfig,Nothing} = nothing,
     monitor::Union{SS.MonitorConfig,Nothing} = nothing,
     waker_fn::Union{Function,Nothing} = nothing,
+    autostart::Bool = (monitor === nothing),
 )
     ctrl = if experiment !== nothing
         SysIdController(signal_map, experiment)
@@ -181,15 +219,30 @@ function run_experiment!(
 
     duration = ctrl.params["duration"]
 
-    @info "Starting SysId experiment" dt_ms=dt_ms duration_s=duration logfile=logfile
+    @info "Starting SysId runtime" dt_ms=dt_ms duration_s=duration logfile=logfile autostart=autostart
 
     SS.start!(runtime, sysid_callback)
 
+    if autostart
+        # Trigger start immediately (simulate start_cmd = 1)
+        ctrl.params["start_cmd"] = 1.0
+        @info "Experiment auto-started"
+    else
+        @info "Waiting for start command from Dash UI"
+    end
+
     try
-        sleep(duration + 0.5)
+        if autostart
+            sleep(duration + 0.5)
+        else
+            # Wait indefinitely — lifecycle controlled from Dash
+            while !SS.stop_requested(sf)
+                sleep(1.0)
+            end
+        end
     catch e
         e isa InterruptException || rethrow(e)
-        @info "Interrupted — stopping early"
+        @info "Interrupted — stopping"
     end
 
     SS.request_stop!(sf)

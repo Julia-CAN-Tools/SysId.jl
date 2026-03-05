@@ -231,6 +231,7 @@ end
         ctrl.params["T_step_time"] = 0.0
         ctrl.params["T_offset"]    = 0.0
         ctrl.params["duration"]    = 10.0
+        ctrl.params["start_cmd"]   = 1.0   # trigger start
 
         inputs  = Dict{String,Float64}()
         outputs = Dict{String,Float64}("io.T" => 0.0)
@@ -249,6 +250,9 @@ end
         ctrl.params["T_amplitude"] = 5.0
         ctrl.params["T_step_time"] = 0.0
         ctrl.params["duration"]    = 1.0
+        ctrl.params["start_cmd"]   = 1.0   # trigger start
+        ctrl.active = true
+        ctrl.last_start_count = 1.0
         ctrl.elapsed = 1.0   # already at duration
 
         outputs = Dict{String,Float64}("io.T" => 99.0)
@@ -256,23 +260,64 @@ end
 
         @test outputs["io.T"] == 0.0
         @test ctrl.params["running"] == 0.0
+        @test ctrl.finished == true
     end
 
     @testset "sysid_callback type=0 outputs zero" begin
         signal_map = [("T", "io.T")]
         ctrl = SysIdController(signal_map)
-        # type=0 → off
-        ctrl.params["duration"] = 10.0
+        # type=0 → off, but experiment started
+        ctrl.params["duration"]  = 10.0
+        ctrl.params["start_cmd"] = 1.0   # trigger start
 
         outputs = Dict{String,Float64}("io.T" => 99.0)
         sysid_callback(ctrl, Dict{String,Float64}(), outputs, 0.01)
         @test outputs["io.T"] == 0.0
     end
 
+    @testset "sysid_callback not active without start_cmd" begin
+        signal_map = [("T", "io.T")]
+        ctrl = SysIdController(signal_map)
+        ctrl.params["T_type"]      = 3.0
+        ctrl.params["T_amplitude"] = 5.0
+        ctrl.params["duration"]    = 10.0
+        # No start_cmd → not active
+
+        outputs = Dict{String,Float64}("io.T" => 99.0)
+        sysid_callback(ctrl, Dict{String,Float64}(), outputs, 0.01)
+        @test outputs["io.T"] == 0.0
+        @test ctrl.params["running"] == 0.0
+        @test ctrl.active == false
+    end
+
+    @testset "sysid_callback stop_cmd stops experiment" begin
+        signal_map = [("T", "io.T")]
+        ctrl = SysIdController(signal_map)
+        ctrl.params["T_type"]      = 3.0
+        ctrl.params["T_amplitude"] = 5.0
+        ctrl.params["duration"]    = 10.0
+        ctrl.params["start_cmd"]   = 1.0
+        ctrl.last_start_count = 1.0
+        ctrl.active = true
+        ctrl.elapsed = 0.5
+
+        # Trigger stop
+        ctrl.params["stop_cmd"] = 1.0
+
+        outputs = Dict{String,Float64}("io.T" => 0.0)
+        sysid_callback(ctrl, Dict{String,Float64}(), outputs, 0.01)
+
+        @test outputs["io.T"] == 0.0
+        @test ctrl.params["running"] == 0.0
+        @test ctrl.active == false
+        @test ctrl.finished == true
+    end
+
     @testset "sysid_callback accumulates elapsed" begin
         signal_map = [("T", "io.T")]
         ctrl = SysIdController(signal_map)
-        ctrl.params["duration"] = 100.0
+        ctrl.params["duration"]  = 100.0
+        ctrl.params["start_cmd"] = 1.0   # trigger start
 
         outputs = Dict{String,Float64}("io.T" => 0.0)
         for _ in 1:5
@@ -280,6 +325,34 @@ end
         end
         @test ctrl.elapsed ≈ 0.05 atol=1e-10
         @test ctrl.params["elapsed"] ≈ 0.05 atol=1e-10
+    end
+
+    @testset "sysid_callback restart after stop" begin
+        signal_map = [("T", "io.T")]
+        ctrl = SysIdController(signal_map)
+        ctrl.params["T_type"]      = 3.0
+        ctrl.params["T_amplitude"] = 5.0
+        ctrl.params["duration"]    = 10.0
+
+        outputs = Dict{String,Float64}("io.T" => 0.0)
+
+        # Start first experiment
+        ctrl.params["start_cmd"] = 1.0
+        sysid_callback(ctrl, Dict{String,Float64}(), outputs, 0.01)
+        @test ctrl.active == true
+        @test outputs["io.T"] ≈ 5.0 atol=1e-10
+
+        # Stop it
+        ctrl.params["stop_cmd"] = 1.0
+        sysid_callback(ctrl, Dict{String,Float64}(), outputs, 0.01)
+        @test ctrl.active == false
+
+        # Start second experiment (increment start_cmd)
+        ctrl.params["start_cmd"] = 2.0
+        sysid_callback(ctrl, Dict{String,Float64}(), outputs, 0.01)
+        @test ctrl.active == true
+        @test ctrl.elapsed ≈ 0.01 atol=1e-10  # elapsed reset
+        @test outputs["io.T"] ≈ 5.0 atol=1e-10
     end
 
     # ── Integration: MockIO + SystemRuntime ───────────────────────────────────
@@ -295,6 +368,7 @@ end
         ctrl.params["S_step_time"] = 0.0
         ctrl.params["S_offset"]    = 0.0
         ctrl.params["duration"]    = 10.0
+        ctrl.params["start_cmd"]   = 1.0   # trigger start
 
         logfile = tempname() * ".csv"
         cfg = SS.SystemConfig(

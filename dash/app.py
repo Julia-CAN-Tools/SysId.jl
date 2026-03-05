@@ -18,7 +18,7 @@ import struct
 import threading
 from collections import deque
 
-from dash import Dash, dcc, html, Input, Output, State, callback
+from dash import Dash, dcc, html, Input, Output, State, callback, no_update
 
 # ---------------------------------------------------------------------------
 # TCP client for TcpMonitor binary protocol (reused from AcrobatSim/dash)
@@ -114,6 +114,14 @@ class SimulatorClient:
                 return []
             return list(buf)
 
+    def get_latest(self, name):
+        """Return the latest value of a signal, or None."""
+        with self.lock:
+            buf = self.history.get(name)
+            if buf is None or len(buf) == 0:
+                return None
+            return buf[-1]
+
     def close(self):
         self._running = False
         for s in (self._stream_sock, self._param_sock):
@@ -197,8 +205,48 @@ sidebar_children = [html.H3("SysId Parameters", style={"marginTop": "0"})]
 for prefix in SIGNAL_PREFIXES:
     sidebar_children.append(make_signal_section(prefix))
 
+# Duration slider
 sidebar_children.append(html.Label("Duration [s]", style={"fontSize": "12px", "fontWeight": "bold"}))
 sidebar_children.append(make_slider("duration", 1.0, 300.0, 1.0, 30.0, "Duration [s]"))
+
+# Experiment controls: Start / Stop buttons + elapsed time display
+sidebar_children.append(html.Hr())
+sidebar_children.append(html.Div([
+    html.Div([
+        html.Button(
+            "Start",
+            id="btn-start",
+            n_clicks=0,
+            style={
+                "backgroundColor": "#28a745", "color": "white", "border": "none",
+                "padding": "8px 24px", "fontSize": "14px", "fontWeight": "bold",
+                "borderRadius": "4px", "cursor": "pointer", "marginRight": "8px",
+            },
+        ),
+        html.Button(
+            "Stop",
+            id="btn-stop",
+            n_clicks=0,
+            style={
+                "backgroundColor": "#dc3545", "color": "white", "border": "none",
+                "padding": "8px 24px", "fontSize": "14px", "fontWeight": "bold",
+                "borderRadius": "4px", "cursor": "pointer",
+            },
+        ),
+    ], style={"display": "flex", "justifyContent": "center", "marginBottom": "8px"}),
+    html.Div(
+        id="experiment-status",
+        children="Idle",
+        style={
+            "textAlign": "center", "fontSize": "13px", "fontWeight": "bold",
+            "padding": "4px", "borderRadius": "4px", "backgroundColor": "#f0f0f0",
+        },
+    ),
+], style={"marginTop": "4px"}))
+
+# Hidden stores for click counts sent to Julia
+sidebar_children.append(dcc.Store(id="store-start-clicks", data=0))
+sidebar_children.append(dcc.Store(id="store-stop-clicks", data=0))
 
 
 # ---------------------------------------------------------------------------
@@ -267,19 +315,52 @@ SLIDER_IDS   = all_slider_ids()
 DROPDOWN_IDS = all_dropdown_ids()
 
 
+# ---------------------------------------------------------------------------
+# Button click callbacks: increment stored click counts
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("store-start-clicks", "data"),
+    Input("btn-start", "n_clicks"),
+    prevent_initial_call=True,
+)
+def on_start_click(n):
+    return n
+
+
+@callback(
+    Output("store-stop-clicks", "data"),
+    Input("btn-stop", "n_clicks"),
+    prevent_initial_call=True,
+)
+def on_stop_click(n):
+    return n
+
+
+# ---------------------------------------------------------------------------
+# Main update callback
+# ---------------------------------------------------------------------------
+
 @callback(
     Output("graph-excitation", "figure"),
     Output("graph-angles",     "figure"),
     Output("graph-velocities", "figure"),
     Output("graph-io-cross",   "figure"),
+    Output("experiment-status", "children"),
+    Output("experiment-status", "style"),
     Input("interval", "n_intervals"),
     [Input(did, "value") for did in DROPDOWN_IDS],
     [State(sid, "value") for sid in SLIDER_IDS],
+    State("store-start-clicks", "data"),
+    State("store-stop-clicks", "data"),
 )
 def update_graphs(n_intervals, *args):
     n_dd = len(DROPDOWN_IDS)
-    dd_values  = args[:n_dd]
-    slv_values = args[n_dd:]
+    n_sl = len(SLIDER_IDS)
+    dd_values     = args[:n_dd]
+    slv_values    = args[n_dd:n_dd + n_sl]
+    start_clicks  = args[n_dd + n_sl]
+    stop_clicks   = args[n_dd + n_sl + 1]
 
     # Build param dict for TcpMonitor
     param_dict = {}
@@ -300,6 +381,10 @@ def update_graphs(n_intervals, *args):
     dur_val = slv_values[slider_idx]
     param_dict["duration"] = float(dur_val) if dur_val is not None else 30.0
 
+    # Start/stop commands (click counts sent as-is; Julia detects rising counts)
+    param_dict["start_cmd"] = float(start_clicks or 0)
+    param_dict["stop_cmd"]  = float(stop_clicks or 0)
+
     client.send_params(param_dict)
 
     # Read history
@@ -310,6 +395,37 @@ def update_graphs(n_intervals, *args):
     theta2 = client.get_history("state.Theta2")
     omega1 = client.get_history("state.Omega1")
     omega2 = client.get_history("state.Omega2")
+
+    # Read experiment state from stream
+    running_val = client.get_latest("running")
+    elapsed_val = client.get_latest("elapsed")
+    duration_val = client.get_latest("duration")
+
+    is_running = running_val is not None and running_val >= 0.5
+    elapsed_s  = elapsed_val if elapsed_val is not None else 0.0
+    dur_s      = duration_val if duration_val is not None else param_dict["duration"]
+
+    if is_running:
+        status_text = f"Running: {elapsed_s:.1f} / {dur_s:.0f} s"
+        status_style = {
+            "textAlign": "center", "fontSize": "13px", "fontWeight": "bold",
+            "padding": "4px", "borderRadius": "4px",
+            "backgroundColor": "#d4edda", "color": "#155724",
+        }
+    elif elapsed_s > 0.5:
+        status_text = f"Finished: {elapsed_s:.1f} s"
+        status_style = {
+            "textAlign": "center", "fontSize": "13px", "fontWeight": "bold",
+            "padding": "4px", "borderRadius": "4px",
+            "backgroundColor": "#fff3cd", "color": "#856404",
+        }
+    else:
+        status_text = "Idle"
+        status_style = {
+            "textAlign": "center", "fontSize": "13px", "fontWeight": "bold",
+            "padding": "4px", "borderRadius": "4px",
+            "backgroundColor": "#f0f0f0", "color": "#333",
+        }
 
     # 1) Excitation signals
     fig_exc = {
@@ -372,7 +488,7 @@ def update_graphs(n_intervals, *args):
         },
     }
 
-    return fig_exc, fig_angles, fig_vel, fig_cross
+    return fig_exc, fig_angles, fig_vel, fig_cross, status_text, status_style
 
 
 if __name__ == "__main__":
