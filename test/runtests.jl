@@ -197,10 +197,10 @@ end
         @test sig.frequency == 1.0
     end
 
-    # ── SysIdController construction ──────────────────────────────────────────
-    @testset "SysIdController default constructor" begin
+    # ── SysIdSystem construction ──────────────────────────────────────────
+    @testset "SysIdSystem default constructor" begin
         signal_map = [("Tau1", "cmd.Tau1"), ("Tau2", "cmd.Tau2")]
-        ctrl = SysIdController(signal_map)
+        ctrl = SysIdSystem(signal_map)
         @test ctrl.lifecycle.elapsed == 0.0
         @test ctrl.params["duration"] == 30.0
         @test ctrl.params["running"] == 0.0
@@ -210,12 +210,12 @@ end
         @test haskey(ctrl.params, "Tau2_sweep_duration")
     end
 
-    @testset "SysIdController with ExperimentConfig" begin
+    @testset "SysIdSystem with ExperimentConfig" begin
         signal_map = [("Tau1", "cmd.Tau1")]
         cfg = ExperimentConfig(10.0, Dict(
             "Tau1" => Dict("type" => 2.0, "amplitude" => 2.0, "f_start" => 0.1, "f_end" => 5.0, "sweep_duration" => 10.0),
         ))
-        ctrl = SysIdController(signal_map, cfg)
+        ctrl = SysIdSystem(signal_map, cfg)
         @test ctrl.params["duration"] == 10.0
         @test ctrl.params["Tau1_type"] == 2.0
         @test ctrl.params["Tau1_amplitude"] == 2.0
@@ -225,7 +225,7 @@ end
     # ── sysid_callback direct tests ───────────────────────────────────────────
     @testset "sysid_callback writes signal values" begin
         signal_map = [("T", "io.T")]
-        ctrl = SysIdController(signal_map)
+        ctrl = SysIdSystem(signal_map)
         ctrl.params["T_type"]      = 3.0   # step
         ctrl.params["T_amplitude"] = 5.0
         ctrl.params["T_step_time"] = 0.0
@@ -245,7 +245,7 @@ end
 
     @testset "sysid_callback zeros outputs after duration" begin
         signal_map = [("T", "io.T")]
-        ctrl = SysIdController(signal_map)
+        ctrl = SysIdSystem(signal_map)
         ctrl.params["T_type"]      = 3.0
         ctrl.params["T_amplitude"] = 5.0
         ctrl.params["T_step_time"] = 0.0
@@ -265,7 +265,7 @@ end
 
     @testset "sysid_callback type=0 outputs zero" begin
         signal_map = [("T", "io.T")]
-        ctrl = SysIdController(signal_map)
+        ctrl = SysIdSystem(signal_map)
         # type=0 → off, but experiment started
         ctrl.params["duration"]  = 10.0
         ctrl.params["start_cmd"] = 1.0   # trigger start
@@ -277,7 +277,7 @@ end
 
     @testset "sysid_callback not active without start_cmd" begin
         signal_map = [("T", "io.T")]
-        ctrl = SysIdController(signal_map)
+        ctrl = SysIdSystem(signal_map)
         ctrl.params["T_type"]      = 3.0
         ctrl.params["T_amplitude"] = 5.0
         ctrl.params["duration"]    = 10.0
@@ -292,7 +292,7 @@ end
 
     @testset "sysid_callback stop_cmd stops experiment" begin
         signal_map = [("T", "io.T")]
-        ctrl = SysIdController(signal_map)
+        ctrl = SysIdSystem(signal_map)
         ctrl.params["T_type"]      = 3.0
         ctrl.params["T_amplitude"] = 5.0
         ctrl.params["duration"]    = 10.0
@@ -315,7 +315,7 @@ end
 
     @testset "sysid_callback accumulates elapsed" begin
         signal_map = [("T", "io.T")]
-        ctrl = SysIdController(signal_map)
+        ctrl = SysIdSystem(signal_map)
         ctrl.params["duration"]  = 100.0
         ctrl.params["start_cmd"] = 1.0   # trigger start
 
@@ -329,7 +329,7 @@ end
 
     @testset "sysid_callback restart after stop" begin
         signal_map = [("T", "io.T")]
-        ctrl = SysIdController(signal_map)
+        ctrl = SysIdSystem(signal_map)
         ctrl.params["T_type"]      = 3.0
         ctrl.params["T_amplitude"] = 5.0
         ctrl.params["duration"]    = 10.0
@@ -362,7 +362,7 @@ end
         io_tx = MockIO(String[], ["cmd"])
 
         signal_map = [("S", "tx.cmd")]
-        ctrl = SysIdController(signal_map)
+        ctrl = SysIdSystem(signal_map)
         ctrl.params["S_type"]      = 3.0   # step
         ctrl.params["S_amplitude"] = 7.0
         ctrl.params["S_step_time"] = 0.0

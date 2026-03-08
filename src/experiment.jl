@@ -1,7 +1,7 @@
 """
-SysId experiment controller and runner.
+SysId experiment system and runner.
 
-SysIdController holds signal params (tunable via TcpMonitor/Dash) and drives
+SysIdSystem holds signal params (tunable via TcpMonitor/Dash) and drives
 output signals according to the current signal configuration.
 
 run_experiment! wires up IOConfigs into a SystemRuntime and runs for a duration.
@@ -9,22 +9,22 @@ run_experiment! wires up IOConfigs into a SystemRuntime and runs for a duration.
 
 import SystemSimulator as SS
 
-# ── SysIdController ───────────────────────────────────────────────────────────
+# ── SysIdSystem ───────────────────────────────────────────────────────────────
 
 """
-    SysIdController
+    SysIdSystem
 
-Controller for system identification experiments.
+System for system identification experiments.
 
 Fields:
 - `params`      — all signal params + `elapsed`, `duration`, `running`
 - `signal_map`  — Vector of (param_prefix, output_global_key) pairs
 - `elapsed`     — accumulated time in seconds (updated each callback)
 """
-mutable struct SysIdController <: SS.AbstractController
+mutable struct SysIdSystem <: SS.AbstractSystem
     params::Dict{String,Float64}
     signal_map::Vector{Tuple{String,String}}
-    lifecycle::SS.ControllerLifecycle
+    lifecycle::SS.SystemLifecycle
 end
 
 """
@@ -49,12 +49,12 @@ function _default_signal_params(prefix::String)
 end
 
 """
-    SysIdController(signal_map) -> SysIdController
+    SysIdSystem(signal_map) -> SysIdSystem
 
-Construct controller with all signals off (type=0).
+Construct system with all signals off (type=0).
 `signal_map` is a Vector of (param_prefix, output_global_key) pairs.
 """
-function SysIdController(signal_map::Vector{Tuple{String,String}})
+function SysIdSystem(signal_map::Vector{Tuple{String,String}})
     params = Dict{String,Float64}(
         "elapsed"   => 0.0,
         "duration"  => 30.0,
@@ -65,7 +65,7 @@ function SysIdController(signal_map::Vector{Tuple{String,String}})
     for (prefix, _) in signal_map
         merge!(params, _default_signal_params(prefix))
     end
-    return SysIdController(params, signal_map, SS.ControllerLifecycle())
+    return SysIdSystem(params, signal_map, SS.SystemLifecycle())
 end
 
 """
@@ -86,12 +86,12 @@ end
 ExperimentConfig(duration::Float64) = ExperimentConfig(duration, Dict{String,Dict{String,Float64}}())
 
 """
-    SysIdController(signal_map, cfg) -> SysIdController
+    SysIdSystem(signal_map, cfg) -> SysIdSystem
 
-Construct controller with initial signal parameters from an ExperimentConfig.
+Construct system with initial signal parameters from an ExperimentConfig.
 """
-function SysIdController(signal_map::Vector{Tuple{String,String}}, cfg::ExperimentConfig)
-    ctrl = SysIdController(signal_map)
+function SysIdSystem(signal_map::Vector{Tuple{String,String}}, cfg::ExperimentConfig)
+    ctrl = SysIdSystem(signal_map)
     ctrl.params["duration"] = cfg.duration
     for (prefix, spec) in cfg.signal_specs
         for (key, val) in spec
@@ -114,7 +114,7 @@ Control callback for system identification. Each cycle:
 2. If active, increments elapsed time and evaluates signals
 3. Zeros outputs when stopped or after duration expires
 """
-function sysid_callback(ctrl::SysIdController, _inputs, outputs, dt_s::Float64)
+function sysid_callback(ctrl::SysIdSystem, _inputs, outputs, dt_s::Float64)
     p = ctrl.params
     SS.update_lifecycle!(ctrl.lifecycle, p, dt_s)
 
@@ -168,9 +168,9 @@ function run_experiment!(
     autostart::Bool = (monitor === nothing),
 )
     ctrl = if experiment !== nothing
-        SysIdController(signal_map, experiment)
+        SysIdSystem(signal_map, experiment)
     else
-        SysIdController(signal_map)
+        SysIdSystem(signal_map)
     end
 
     cfg = SS.SystemConfig(dt_ms, io_configs, logfile, monitor)

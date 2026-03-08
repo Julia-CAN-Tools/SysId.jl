@@ -12,7 +12,7 @@ include("experiment.jl")
 
 export AbstractSignal, SineSignal, ChirpSignal, StepSignal, PulseSignal
 export evaluate, signal_from_params
-export ExperimentConfig, SysIdController
+export ExperimentConfig, SysIdSystem
 export sysid_callback, run_experiment!
 
 end # module SysId
