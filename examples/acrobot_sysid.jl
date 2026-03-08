@@ -32,7 +32,7 @@ state_io = SS.CanIO(
     typeof(STATE_OUTPUT_MESSAGES[1])[]   # no TX catalog
 )
 
-io_configs = SS.IOConfig[
+io_configs = [
     SS.IOConfig(:cmd,   cmd_io,   256, SS.IO_MODE_WRITEONLY),
     SS.IOConfig(:state, state_io, 256, SS.IO_MODE_READONLY),
 ]

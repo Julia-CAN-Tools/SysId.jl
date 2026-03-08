@@ -159,14 +159,14 @@ Returns the logfile path.
 """
 function run_experiment!(
     signal_map::Vector{Tuple{String,String}},
-    io_configs::Vector{SS.IOConfig},
+    io_configs::Vector{SS.IOConfig{IO}},
     dt_ms::Int;
     logfile::String = "SysIdLog.csv",
     experiment::Union{ExperimentConfig,Nothing} = nothing,
     monitor::Union{SS.MonitorConfig,Nothing} = nothing,
     waker_fn::Union{Function,Nothing} = nothing,
     autostart::Bool = (monitor === nothing),
-)
+) where {IO<:SS.AbstractIO}
     ctrl = if experiment !== nothing
         SysIdSystem(signal_map, experiment)
     else
