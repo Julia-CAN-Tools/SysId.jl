@@ -11,39 +11,21 @@ uuid = "a1b2c3d4-5678-9abc-def0-123456789abc"
 version = "0.1.0"
 
 [[deps.CANInterface]]
+deps = ["PrecompileTools"]
 path = "../CANInterface.jl"
 uuid = "44756509-f907-4102-b943-bbf9a270a596"
 version = "0.2.0"
 
 [[deps.CANUtils]]
-deps = ["FixedSizeArrays", "PrecompileTools", "Printf"]
+deps = ["PrecompileTools", "Printf"]
 path = "../CANUtils.jl"
 uuid = "cda4bd93-d5c6-49f2-9dbf-c90406d773d0"
 version = "0.2.0"
-
-[[deps.Collects]]
-git-tree-sha1 = "d0b504dbd9ea6a0142845a6f9b4c58b3627c718f"
-uuid = "08986516-18db-4a8b-8eaa-f5ef1828d8f1"
-version = "1.1.0"
 
 [[deps.Dates]]
 deps = ["Printf"]
 uuid = "ade2ca70-3891-5945-98fb-dc099432e06a"
 version = "1.11.0"
-
-[[deps.FixedSizeArrays]]
-deps = ["Collects"]
-git-tree-sha1 = "76bb6e6427ba47b22c97b7f2cddc1ae002e6a9ad"
-uuid = "3821ddf9-e5b5-40d5-8e25-6813ab96b5e2"
-version = "1.3.0"
-
-    [deps.FixedSizeArrays.extensions]
-    FixedSizeArraysAdaptExt = "Adapt"
-    FixedSizeArraysRandomExt = "Random"
-
-    [deps.FixedSizeArrays.weakdeps]
-    Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
-    Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 
 [[deps.J1939Parser]]
 deps = ["CANUtils", "PrecompileTools", "Printf"]
