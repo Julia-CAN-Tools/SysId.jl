@@ -60,9 +60,30 @@ fi
 # ── Start Dash UI using AcrobatSim's venv ─────────────────────────────
 echo "Starting Dash UI on port 8060..."
 source "$VENV/bin/activate"
-python "$SCRIPT_DIR/dash/app.py" &
+PYTHONPATH="$SCRIPT_DIR/../srt-dash${PYTHONPATH:+:$PYTHONPATH}" python "$SCRIPT_DIR/dash/app.py" &
 DASH_PID=$!
 echo "  Dash PID: $DASH_PID"
+
+echo "Waiting for Dash UI (port 8060)..."
+for i in $(seq 1 20); do
+    if ss -tln | grep -q ':8060 '; then
+        echo "✓ Dash UI ready on port 8060"
+        break
+    fi
+    if ! kill -0 "$DASH_PID" 2>/dev/null; then
+        echo "ERROR: Dash process exited unexpectedly"
+        kill "$JULIA_PID" 2>/dev/null || true
+        exit 1
+    fi
+    sleep 1
+done
+
+if ! ss -tln | grep -q ':8060 '; then
+    echo "ERROR: Dash UI did not start within 20s"
+    kill "$DASH_PID" 2>/dev/null || true
+    kill "$JULIA_PID" 2>/dev/null || true
+    exit 1
+fi
 
 echo ""
 echo "═══════════════════════════════════════════"

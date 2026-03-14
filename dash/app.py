@@ -13,6 +13,16 @@ Start SysId.jl first:
     cd SysId.jl && julia --threads=auto --project=. examples/acrobot_sysid.jl
 """
 
+from pathlib import Path
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SRT_DASH_ROOT = REPO_ROOT / "srt-dash"
+SRT_DASH_ROOT_STR = str(SRT_DASH_ROOT)
+if SRT_DASH_ROOT_STR in sys.path:
+    sys.path.remove(SRT_DASH_ROOT_STR)
+sys.path.insert(0, SRT_DASH_ROOT_STR)
+
 from srt_dash import AppConfig, ParamDef, PlotDef, TraceDef, build_app
 
 SIGNAL_TYPES = [("Off", 0), ("Sine", 1), ("Chirp", 2), ("Step", 3), ("Pulse", 4)]
@@ -33,6 +43,21 @@ SIGNAL_SLIDER_DEFS = [
 ]
 
 SIGNAL_PREFIXES = ["Tau1", "Tau2"]
+SIGNAL_DEFAULT_OVERRIDES = {
+    "Tau1": {
+        "type": 2,
+        "amplitude": 2.0,
+        "f_start": 0.1,
+        "f_end": 5.0,
+        "sweep_duration": 30.0,
+    },
+    "Tau2": {
+        "type": 1,
+        "amplitude": 1.0,
+        "frequency": 0.5,
+        "phase": 0.0,
+    },
+}
 
 
 def sysid_param_builder(widget_values):
@@ -50,13 +75,20 @@ def sysid_param_builder(widget_values):
 # Build param definitions for each signal prefix
 params = []
 for prefix in SIGNAL_PREFIXES:
+    prefix_defaults = SIGNAL_DEFAULT_OVERRIDES.get(prefix, {})
     params.append(ParamDef(
         f"{prefix}_type", f"{prefix} type",
-        kind="dropdown", options=SIGNAL_TYPES, default=0, group=prefix,
+        kind="dropdown", options=SIGNAL_TYPES, default=prefix_defaults.get("type", 0), group=prefix,
     ))
     for suffix, label, lo, hi, step, default in SIGNAL_SLIDER_DEFS:
         params.append(ParamDef(
-            f"{prefix}_{suffix}", label, lo, hi, step, default, group=prefix,
+            f"{prefix}_{suffix}",
+            label,
+            lo,
+            hi,
+            step,
+            prefix_defaults.get(suffix, default),
+            group=prefix,
         ))
 
 params.append(ParamDef("duration", "Duration [s]", 1.0, 300.0, 1.0, 30.0, group="Experiment"))
@@ -74,12 +106,12 @@ config = AppConfig(
             TraceDef("cmd.Tau2", "Tau2 [N*m]"),
         ], yaxis="Torque [N*m]"),
         PlotDef("graph-angles", "Joint Angles", [
-            TraceDef("state.Theta1", "theta1 [rad]"),
-            TraceDef("state.Theta2", "theta2 [rad]"),
+            TraceDef("state.Theta1", "theta1 [rad]", line_shape="spline", line_smoothing=0.7),
+            TraceDef("state.Theta2", "theta2 [rad]", line_shape="spline", line_smoothing=0.7),
         ], yaxis="Angle [rad]"),
         PlotDef("graph-velocities", "Joint Velocities", [
-            TraceDef("state.Omega1", "omega1 [rad/s]"),
-            TraceDef("state.Omega2", "omega2 [rad/s]"),
+            TraceDef("state.Omega1", "omega1 [rad/s]", line_shape="spline", line_smoothing=0.7),
+            TraceDef("state.Omega2", "omega2 [rad/s]", line_shape="spline", line_smoothing=0.7),
         ], yaxis="Angular Velocity [rad/s]"),
         PlotDef("graph-io-cross", "I/O Cross-Plot (Tau1 vs theta1)", [
             TraceDef("state.Theta1", "Tau1 vs theta1", mode="markers"),

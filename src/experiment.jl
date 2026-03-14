@@ -42,26 +42,14 @@ function run_experiment!(
     sf  = SS.StopSignal()
     runtime = SS.SystemRuntime(cfg, sf, ctrl)
 
-    duration = ctrl.params["duration"]
+    duration = runtime.params["duration"]
 
     @info "Starting SysId runtime" dt_ms=dt_ms duration_s=duration logfile=logfile autostart=autostart
 
-    # Wrap the callback to sync lifecycle params (running, elapsed) back into
-    # runtime.params after each invocation. apply_monitor_params! initialises
-    # runtime.params from Dash (which sends 0 for these read-only fields), so
-    # without this sync copy_to_monitor! always streams running=0 and the Dash
-    # status display never leaves "Idle".
-    function synced_callback(c, inputs, outputs, dt_s)
-        sysid_callback(c, inputs, outputs, dt_s)
-        runtime.params["running"] = c.params["running"]
-        runtime.params["elapsed"] = c.params["elapsed"]
-    end
-
-    SS.start!(runtime, synced_callback)
+    SS.start!(runtime)
 
     if autostart
-        # Trigger start immediately (simulate start_cmd = 1)
-        ctrl.params["start_cmd"] = 1.0
+        runtime.params["start_cmd"] = 1.0
         @info "Experiment auto-started"
     else
         @info "Waiting for start command from Dash UI"

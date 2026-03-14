@@ -2,12 +2,29 @@ import SystemSimulator as SS
 
 const CachedSignal = Union{Nothing,SineSignal,ChirpSignal,StepSignal,PulseSignal}
 
+struct SignalParamSlots
+    type::Int
+    amplitude::Int
+    frequency::Int
+    phase::Int
+    offset::Int
+    f_start::Int
+    f_end::Int
+    sweep_duration::Int
+    step_time::Int
+    pulse_start::Int
+    pulse_width::Int
+end
+
 mutable struct SysIdSystem <: SS.AbstractSystem
-    params::Dict{String,Float64}
+    param_names::Vector{String}
+    initial_values::Dict{String,Float64}
     signal_map::Vector{Tuple{String,String}}
     lifecycle::SS.SystemLifecycle
+    lifecycle_slots::Union{SS.LifecycleSlots,Nothing}
+    signal_slots::Vector{SignalParamSlots}
+    output_slots::Vector{Int}
     signal_cache::Vector{CachedSignal}
-    _params_dirty::Bool
 end
 
 function _default_signal_params(prefix::String)
@@ -26,20 +43,47 @@ function _default_signal_params(prefix::String)
     )
 end
 
+function _signal_param_names(prefix::String)
+    return String[
+        "$(prefix)_type",
+        "$(prefix)_amplitude",
+        "$(prefix)_frequency",
+        "$(prefix)_phase",
+        "$(prefix)_offset",
+        "$(prefix)_f_start",
+        "$(prefix)_f_end",
+        "$(prefix)_sweep_duration",
+        "$(prefix)_step_time",
+        "$(prefix)_pulse_start",
+        "$(prefix)_pulse_width",
+    ]
+end
+
 function SysIdSystem(signal_map::Vector{Tuple{String,String}})
-    params = Dict{String,Float64}(
+    initial_values = Dict{String,Float64}(
         "elapsed"   => 0.0,
         "duration"  => 30.0,
         "running"   => 0.0,
         "start_cmd" => 0.0,
         "stop_cmd"  => 0.0,
     )
+    param_names = ["elapsed", "duration", "running", "start_cmd", "stop_cmd"]
     for (prefix, _) in signal_map
-        merge!(params, _default_signal_params(prefix))
+        defaults = _default_signal_params(prefix)
+        append!(param_names, _signal_param_names(prefix))
+        merge!(initial_values, defaults)
     end
     signal_cache = Vector{CachedSignal}(undef, length(signal_map))
-    ctrl = SysIdSystem(params, signal_map, SS.SystemLifecycle(), signal_cache, true)
-    _refresh_signal_cache!(ctrl)
+    ctrl = SysIdSystem(
+        param_names,
+        initial_values,
+        signal_map,
+        SS.SystemLifecycle(),
+        nothing,
+        SignalParamSlots[],
+        Int[],
+        signal_cache,
+    )
     return ctrl
 end
 
@@ -53,55 +97,83 @@ ExperimentConfig(duration::Float64) =
 
 function SysIdSystem(signal_map::Vector{Tuple{String,String}}, cfg::ExperimentConfig)
     ctrl = SysIdSystem(signal_map)
-    ctrl.params["duration"] = cfg.duration
+    ctrl.initial_values["duration"] = cfg.duration
     for (prefix, spec) in cfg.signal_specs
         for (key, val) in spec
             param_key = "$(prefix)_$(key)"
-            if haskey(ctrl.params, param_key)
-                ctrl.params[param_key] = Float64(val)
+            if haskey(ctrl.initial_values, param_key)
+                ctrl.initial_values[param_key] = Float64(val)
             end
         end
     end
-    ctrl._params_dirty = true
-    _refresh_signal_cache!(ctrl)
     return ctrl
 end
 
-function _refresh_signal_cache!(ctrl::SysIdSystem)
-    @inbounds for (i, (prefix, _)) in enumerate(ctrl.signal_map)
-        ctrl.signal_cache[i] = signal_from_params(ctrl.params, prefix)
+function _bind_signal_slots(params, prefix::String)
+    return SignalParamSlots(
+        SS.signal_slot(params, "$(prefix)_type"),
+        SS.signal_slot(params, "$(prefix)_amplitude"),
+        SS.signal_slot(params, "$(prefix)_frequency"),
+        SS.signal_slot(params, "$(prefix)_phase"),
+        SS.signal_slot(params, "$(prefix)_offset"),
+        SS.signal_slot(params, "$(prefix)_f_start"),
+        SS.signal_slot(params, "$(prefix)_f_end"),
+        SS.signal_slot(params, "$(prefix)_sweep_duration"),
+        SS.signal_slot(params, "$(prefix)_step_time"),
+        SS.signal_slot(params, "$(prefix)_pulse_start"),
+        SS.signal_slot(params, "$(prefix)_pulse_width"),
+    )
+end
+
+SS.parameter_names(ctrl::SysIdSystem) = copy(ctrl.param_names)
+
+function SS.monitor_parameter_names(ctrl::SysIdSystem)
+    return String[name for name in ctrl.param_names if name != "running" && name != "elapsed"]
+end
+
+function SS.initialize_parameters!(ctrl::SysIdSystem, params)::Nothing
+    for name in ctrl.param_names
+        params[name] = ctrl.initial_values[name]
     end
-    ctrl._params_dirty = false
-    return ctrl
+    return nothing
 end
 
-"""
-    sysid_callback(ctrl, inputs, outputs, dt_s)
+function SS.bind!(ctrl::SysIdSystem, runtime)::Nothing
+    ctrl.lifecycle_slots = SS.bind_lifecycle(runtime.params)
+    ctrl.signal_slots = [_bind_signal_slots(runtime.params, prefix) for (prefix, _) in ctrl.signal_map]
+    ctrl.output_slots = [SS.signal_slot(runtime.outputs, out_key) for (_, out_key) in ctrl.signal_map]
+    return nothing
+end
 
-Control callback for system identification. Each cycle:
-1. Checks start_cmd / stop_cmd counters for start/stop events
-2. If active, increments elapsed time and evaluates signals
-3. Zeros outputs when stopped or after duration expires
-"""
-function sysid_callback(ctrl::SysIdSystem, _inputs, outputs, dt_s::Float64)
-    p = ctrl.params
-    event = SS.update_lifecycle!(ctrl.lifecycle, p, dt_s)
+function SS.parameters_updated!(ctrl::SysIdSystem, params)::Nothing
+    @inbounds for i in eachindex(ctrl.signal_slots)
+        ctrl.signal_cache[i] = signal_from_slots(params, ctrl.signal_slots[i])
+    end
+    return nothing
+end
 
-    if ctrl._params_dirty || event == :started
-        _refresh_signal_cache!(ctrl)
+function SS.control_step!(ctrl::SysIdSystem, _inputs, outputs, params, dt_s::Float64)
+    event = SS.update_lifecycle!(ctrl.lifecycle, params, ctrl.lifecycle_slots, dt_s)
+
+    if event == :started
+        SS.parameters_updated!(ctrl, params)
     end
 
     if ctrl.lifecycle.active
         t = ctrl.lifecycle.elapsed
-        @inbounds for (i, (_, out_key)) in enumerate(ctrl.signal_map)
+        @inbounds for i in eachindex(ctrl.output_slots)
             sig = ctrl.signal_cache[i]
-            outputs[out_key] = sig === nothing ? 0.0 : evaluate(sig, t)
+            outputs[ctrl.output_slots[i]] = sig === nothing ? 0.0 : evaluate(sig, t)
         end
     else
-        for (_, out_key) in ctrl.signal_map
-            outputs[out_key] = 0.0
+        @inbounds for slot in ctrl.output_slots
+            outputs[slot] = 0.0
         end
     end
 
     return nothing
+end
+
+function sysid_callback(ctrl::SysIdSystem, inputs, outputs, params, dt_s::Float64)
+    return SS.control_step!(ctrl, inputs, outputs, params, dt_s)
 end

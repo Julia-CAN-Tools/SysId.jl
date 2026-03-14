@@ -117,3 +117,39 @@ function signal_from_params(params::Dict{String,Float64}, prefix::String)
         return nothing  # type 0 or unknown → off
     end
 end
+
+function signal_from_slots(params, slots)
+    sig_type = round(Int, params[slots.type])
+
+    if sig_type == 1
+        return SineSignal(
+            amplitude = params[slots.amplitude],
+            frequency = params[slots.frequency],
+            phase     = params[slots.phase],
+            offset    = params[slots.offset],
+        )
+    elseif sig_type == 2
+        return ChirpSignal(
+            amplitude = params[slots.amplitude],
+            f_start   = params[slots.f_start],
+            f_end     = params[slots.f_end],
+            duration  = params[slots.sweep_duration],
+            offset    = params[slots.offset],
+        )
+    elseif sig_type == 3
+        return StepSignal(
+            amplitude = params[slots.amplitude],
+            step_time = params[slots.step_time],
+            offset    = params[slots.offset],
+        )
+    elseif sig_type == 4
+        return PulseSignal(
+            amplitude   = params[slots.amplitude],
+            pulse_start = params[slots.pulse_start],
+            pulse_width = params[slots.pulse_width],
+            offset      = params[slots.offset],
+        )
+    else
+        return nothing
+    end
+end
