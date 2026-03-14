@@ -208,6 +208,9 @@ end
         @test ctrl.params["Tau2_type"] == 0.0
         @test haskey(ctrl.params, "Tau1_amplitude")
         @test haskey(ctrl.params, "Tau2_sweep_duration")
+        @test length(ctrl.signal_cache) == 2
+        @test all(isnothing, ctrl.signal_cache)
+        @test ctrl._params_dirty == false
     end
 
     @testset "SysIdSystem with ExperimentConfig" begin
@@ -220,6 +223,26 @@ end
         @test ctrl.params["Tau1_type"] == 2.0
         @test ctrl.params["Tau1_amplitude"] == 2.0
         @test ctrl.params["Tau1_f_start"] == 0.1
+        @test ctrl.signal_cache[1] isa ChirpSignal
+    end
+
+    @testset "sysid_callback refreshes cached signals when params change" begin
+        signal_map = [("T", "io.T")]
+        ctrl = SysIdSystem(signal_map)
+        outputs = Dict{String,Float64}("io.T" => 0.0)
+
+        ctrl.params["T_type"] = 1.0
+        ctrl.params["T_amplitude"] = 2.0
+        ctrl.params["T_frequency"] = 0.0
+        ctrl.params["T_offset"] = 0.5
+        ctrl.params["start_cmd"] = 1.0
+        ctrl._params_dirty = true
+
+        sysid_callback(ctrl, Dict{String,Float64}(), outputs, 0.01)
+
+        @test ctrl.signal_cache[1] isa SineSignal
+        @test ctrl._params_dirty == false
+        @test outputs["io.T"] ≈ 0.5 atol=1e-10
     end
 
     # ── sysid_callback direct tests ───────────────────────────────────────────
